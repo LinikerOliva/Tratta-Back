@@ -1,0 +1,1 @@
+id; password; is_superuser; email; nome_completo; role; is_active; is_verified; is_staff; date_joined; last_login

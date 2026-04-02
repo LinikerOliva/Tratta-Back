@@ -1,0 +1,463 @@
+# 🏗️ Arquitetura do Backend — Trathea
+
+> **Versão da API:** 2.0.0  
+> **Stack principal:** Django 4.2 + Django REST Framework + PostgreSQL (prod) / SQLite (dev)  
+> **Atualizado em:** 02/03/2026
+
+---
+
+## 1. Visão Geral
+
+O Trathea Backend é uma **API RESTful** construída com Django e DRF, organizada em **módulos independentes (Django apps)**, orquestrados por um núcleo central (`trathea_orchestrator`). A separação por domínio de negócio garante baixo acoplamento e alta coesão.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                     FRONTEND (React)                     │
+│                  localhost:5173 / prod                   │
+└────────────────────────┬────────────────────────────────┘
+                         │ HTTPS / JWT Bearer
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│              trathea_orchestrator (API Gateway)          │
+│  urls.py → roteia /api/* para cada app                  │
+│  settings/ (base, dev, prod)                            │
+└──────┬────────────────────────────────────────┬─────────┘
+       │ Django Apps (Módulos de Domínio)        │ trathea_core
+       ▼                                         ▼
+ ┌──────────────┐  ┌──────────────────────────────────────┐
+ │  core_app    │  │  auth/        — permissões RBAC       │
+ │  medico_app  │  │  audit/       — middleware + models   │
+ │  paciente_app│  │  ai/          — Google Gemini         │
+ │  clinica_app │  │  pdf/         — WeasyPrint            │
+ │  consulta_app│  │  signature/   — assinatura Gov.br     │
+ │  prescricao_app  │  search/      — busca global          │
+ │  exame_app   │  │  utils/       — response, pagination  │
+ │  admin_app   │  └──────────────────────────────────────┘
+ └──────────────┘
+       │
+       ▼
+ ┌────────────┐   ┌───────────┐   ┌─────────────────────┐
+ │  SQLite    │   │  Redis    │   │  Gov.br OAuth2 / API │
+ │  (dev)     │   │  (Celery) │   │  Gemini AI           │
+ │  PostgreSQL│   │           │   │  SMTP (email)        │
+ │  (prod)    │   └───────────┘   └─────────────────────┘
+ └────────────┘
+```
+
+---
+
+## 2. Stack Tecnológica
+
+| Camada | Tecnologia | Versão |
+|---|---|---|
+| Framework web | Django | `>=4.2, <5.0` |
+| API REST | Django REST Framework | `>=3.14` |
+| Autenticação | DRF SimpleJWT | `>=5.3` |
+| CORS | django-cors-headers | `>=4.0` |
+| Documentação | drf-spectacular (OpenAPI 3) | `>=0.27` |
+| PDF | WeasyPrint | `>=60.0` |
+| IA | Google Gemini (`google-generativeai`) | `>=0.5` |
+| Filas assíncronas | Celery + Redis | `>=5.3` / `>=5.0` |
+| Banco (dev) | SQLite | nativo Django |
+| Banco (prod) | PostgreSQL + psycopg2 | `>=2.9` |
+| Servidor (prod) | Gunicorn + WhiteNoise | `>=21.0` / `>=6.6` |
+| Criptografia | cryptography + python-jose | `>=41.0` / `>=3.3` |
+| Env vars | python-decouple | `>=3.8` |
+| Rate limiting | django-ratelimit | `>=4.0` |
+
+---
+
+## 3. Estrutura de Diretórios
+
+```
+Trathea-BackEnd/
+│
+├── trathea_orchestrator/          # ← "Cérebro" do projeto
+│   ├── urls.py                    # API Gateway — roteia TUDO
+│   ├── asgi.py / wsgi.py
+│   └── settings/
+│       ├── base.py                # Configurações compartilhadas
+│       ├── dev.py                 # Desenvolvimento (DEBUG=True, SQLite)
+│       └── prod.py                # Produção (PostgreSQL, HTTPS, WhiteNoise)
+│
+├── trathea_core/                  # ← Serviços transversais reutilizáveis
+│   ├── auth/permissions.py        # Classes de permissão RBAC
+│   ├── audit/
+│   │   ├── middleware.py          # Log automático de escritas
+│   │   └── models.py              # Modelo AuditLog
+│   ├── ai/gemini_service.py       # Integração Google Gemini
+│   ├── pdf/                       # Utilitários PDF (WeasyPrint)
+│   ├── signature/                 # Integração Gov.br PAdES
+│   ├── search/                    # Busca global
+│   └── utils/
+│       ├── response.py            # api_success, api_error, api_created...
+│       ├── pagination.py          # TratheaPagination
+│       ├── exceptions.py          # custom_exception_handler
+│       ├── validators.py
+│       └── sanitizers.py
+│
+├── core_app/                      # ← Usuário e autenticação
+│   ├── models.py                  # CustomUser, UserProfile
+│   ├── serializers.py
+│   └── urls/
+│       ├── auth_urls.py           # /api/auth/*
+│       └── user_urls.py           # /api/users/*
+│
+├── medico_app/                    # ← Módulo Médico
+├── paciente_app/                  # ← Módulo Paciente + Prontuários
+├── clinica_app/                   # ← Módulo Clínica + Secretaria
+├── consulta_app/                  # ← Consultas + Agendamentos
+├── prescricao_app/                # ← Receitas + Medicamentos (mais complexo)
+│   ├── models.py                  # Receita, ItemReceita, Medicamento, TemplateReceita
+│   ├── views/
+│   │   ├── receita_crud.py        # CRUD de receitas
+│   │   ├── receita_assinatura.py  # Assinatura digital Gov.br
+│   │   ├── receita_verificacao.py # Verificação pública via hash/QR
+│   │   └── receita_pdf.py         # 🆕 Geração de PDF com WeasyPrint
+│   ├── services/
+│   │   └── govbr_assinar_service.py
+│   └── urls_receitas.py / urls_medicamentos.py / urls_verificacao.py
+│
+├── exame_app/                     # ← Módulo Exames
+├── admin_app/                     # ← Painel Admin + Solicitações
+│
+├── templates/
+│   └── pdf/receita.html           # Template HTML da receita médica
+│
+├── tests/                         # Testes automatizados (pytest-django)
+├── requirements.txt
+├── manage.py
+└── .env                           # Variáveis de ambiente (não versionar)
+```
+
+---
+
+## 4. Modelo de Usuário e RBAC
+
+### CustomUser (`core_app`)
+
+Login por **email** (não username). Campo `role` determina todo o controle de acesso.
+
+| Role | Descrição |
+|---|---|
+| [admin](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/core_app/models.py#74-77) | Acesso total ao sistema |
+| [medico](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/core_app/models.py#78-81) | Cria receitas, consultas, acessa pacientes |
+| [paciente](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/core_app/models.py#82-85) | Acessa apenas seus próprios dados |
+| `secretaria` | Gerencia agendamentos e dados de clínica |
+| `clinica` | Gerencia médicos vinculados |
+
+### Classes de Permissão ([trathea_core/auth/permissions.py](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/trathea_core/auth/permissions.py))
+
+```python
+IsDoctor             # role == 'medico'
+IsPatient            # role == 'paciente'
+IsClinic             # role == 'clinica'
+IsSecretary          # role == 'secretaria'
+IsAdminUser          # role == 'admin'
+IsOwner              # obj.user == request.user
+IsDoctorOrAdmin      # role in ('medico', 'admin')
+IsDoctorOrReadOnly   # escrita: médico; leitura: qualquer autenticado
+IsMedicalStaff       # role in ('medico', 'secretaria', 'clinica', 'admin')
+IsGovBrLinked        # médico com Gov.br vinculado (para assinatura)
+CanAccessPatientData # dados de paciente com RBAC por objeto
+```
+
+---
+
+## 5. Mapa de Endpoints da API
+
+Prefixo base: `/api/`
+
+### 🔐 Autenticação (`/api/auth/`)
+| Método | Endpoint | Descrição |
+|---|---|---|
+| POST | `/api/auth/login/` | Login com email + senha → JWT |
+| POST | `/api/auth/logout/` | Logout (blacklist do refresh token) |
+| POST | `/api/auth/token/refresh/` | Renova access token |
+| POST | `/api/auth/register/` | Registro de novo usuário |
+| GET/POST | `/api/auth/govbr/` | Início do OAuth2 Gov.br |
+| GET | `/api/auth/govbr/callback/` | Callback OAuth2 Gov.br |
+
+### 👤 Usuários (`/api/users/`)
+| Método | Endpoint | Descrição |
+|---|---|---|
+| GET/PUT | `/api/users/me/` | Perfil do usuário logado |
+| GET | `/api/users/` | Lista usuários (admin only) |
+
+### 👨‍⚕️ Médicos (`/api/doctors/`)
+| Método | Endpoint | Descrição |
+|---|---|---|
+| GET | `/api/doctors/` | Lista médicos |
+| GET/PUT | `/api/doctors/{id}/` | Detalhe / editar médico |
+
+### 🧑‍🤝‍🧑 Pacientes (`/api/patients/`, `/api/prontuarios/`)
+| Método | Endpoint | Descrição |
+|---|---|---|
+| GET/POST | `/api/patients/` | Lista / cadastro de pacientes |
+| GET/PUT | `/api/patients/{id}/` | Detalhe / editar paciente |
+| GET/POST | `/api/prontuarios/` | Prontuários médicos |
+| GET/PUT | `/api/prontuarios/{id}/` | Detalhe de prontuário |
+
+### 🏥 Clínicas e Secretarias
+| Método | Endpoint | Descrição |
+|---|---|---|
+| GET/POST | `/api/clinics/` | Clínicas |
+| GET/PUT | `/api/clinics/{id}/` | Detalhe de clínica |
+| GET/POST | `/api/secretarias/` | Secretárias vinculadas |
+
+### 📅 Consultas e Agendamentos
+| Método | Endpoint | Descrição |
+|---|---|---|
+| GET/POST | `/api/consultas/` | Consultas médicas |
+| GET/PUT | `/api/consultas/{id}/` | Detalhe de consulta |
+| GET/POST | `/api/agendamentos/` | Agendamentos |
+| GET/PUT | `/api/agendamentos/{id}/` | Detalhe de agendamento |
+
+### 💊 Receitas e Medicamentos (`/api/receitas/`, `/api/medicamentos/`)
+| Método | Endpoint | Permissão | Descrição |
+|---|---|---|---|
+| GET | `/api/receitas/` | médico/admin | Lista receitas |
+| POST | `/api/receitas/` | médico | Cria receita |
+| GET | `/api/receitas/{id}/` | médico/paciente/admin | Detalhe |
+| PUT | `/api/receitas/{id}/` | médico (rascunho) | Edita receita |
+| DELETE | `/api/receitas/{id}/` | médico/admin (rascunho) | Remove receita |
+| POST | `/api/receitas/{id}/assinar/` | médico + Gov.br | Assinatura digital |
+| **GET** | **`/api/receitas/{id}/pdf/`** | médico/paciente/admin | **🆕 Download PDF** |
+| GET/POST | `/api/medicamentos/` | admin | Catálogo de medicamentos |
+
+### 🧪 Exames (`/api/exames/`)
+| Método | Endpoint | Descrição |
+|---|---|---|
+| GET/POST | `/api/exames/` | Lista / solicita exames |
+| GET/PUT | `/api/exames/{id}/` | Detalhe de exame |
+
+### 🛡️ Admin (`/api/admin-panel/`, `/api/solicitacoes/`)
+| Método | Endpoint | Descrição |
+|---|---|---|
+| GET | `/api/admin-panel/` | Dashboard admin |
+| GET/POST | `/api/solicitacoes/` | Solicitações pendentes |
+| PUT | `/api/solicitacoes/{id}/` | Aprovar/rejeitar solicitação |
+
+### 🤖 IA Gemini (`/api/ai/`)
+| Método | Endpoint | Descrição |
+|---|---|---|
+| POST | `/api/ai/anamnese/` | Sugestão de perguntas de anamnese |
+| POST | `/api/ai/diagnostico/` | Hipóteses diagnósticas + CID-10 |
+| POST | `/api/ai/prescricao/` | Sugestão de prescrição |
+| POST | `/api/ai/prontuario/resumo/` | Resumo clínico do prontuário |
+
+### 📊 Auditoria e Busca
+| Método | Endpoint | Descrição |
+|---|---|---|
+| GET | `/api/audit/` | Logs de auditoria (admin) |
+| GET | `/api/search/` | Busca global |
+
+### 🔗 Pública (sem autenticação)
+| Método | Endpoint | Descrição |
+|---|---|---|
+| GET | `/verificar/{hash}/` | Verificação pública de receita via QR Code |
+
+### 📖 Documentação OpenAPI
+| Endpoint | Descrição |
+|---|---|
+| `/api/schema/` | Schema YAML raw |
+| `/api/docs/` | Swagger UI interativo |
+| `/api/redoc/` | ReDoc |
+
+---
+
+## 6. Autenticação e Segurança
+
+### JWT (SimpleJWT)
+- **Access token:** 15 minutos (configurável via [.env](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/.env))
+- **Refresh token:** 7 dias (configurável via [.env](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/.env))
+- **Rotação automática** de refresh tokens habilitada
+- **Blacklist** ativada — logout invalida efetivamente o token
+- **Header:** `Authorization: Bearer <token>`
+
+### Throttling (Rate Limiting)
+| Escopo | Limite |
+|---|---|
+| Anônimo | 100 req/hora |
+| Usuário autenticado | 1000 req/hora |
+| Login | 10 req/minuto |
+| Assinar receita | 5 req/minuto |
+
+### CORS
+- Origins permitidas configuradas via [.env](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/.env) (`CORS_ALLOWED_ORIGINS`)
+- Dev padrão: `localhost:5173`, `localhost:3000`
+- `CORS_ALLOW_CREDENTIALS = True`
+
+### Segurança em Produção (prod.py)
+- `SECURE_SSL_REDIRECT = True`
+- `SECURE_HSTS_SECONDS = 31536000` (1 ano)
+- `SECURE_HSTS_PRELOAD = True`
+- `SESSION_COOKIE_SECURE = True`
+- `CSRF_COOKIE_SECURE = True`
+- `X_FRAME_OPTIONS = "DENY"`
+
+---
+
+## 7. Serviços Transversais (`trathea_core`)
+
+### 📋 Auditoria
+- **Middleware automático** ([AuditMiddleware](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/trathea_core/audit/middleware.py#22-54)): loga todos os `POST/PUT/PATCH/DELETE` bem-sucedidos de usuários autenticados.
+- **Log manual** nas operações críticas: assinatura de receita, prontuários, solicitações.
+- Modelo `AuditLog` armazena histórico persistente.
+
+### 🤖 Inteligência Artificial (Gemini)
+- Integração lazy com `google-generativeai` (modelo `gemini-pro`)
+- Funções disponíveis:
+  - [sugerir_anamnese()](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/trathea_core/ai/gemini_service.py#62-85) — perguntas clínicas por sintoma
+  - [sugerir_diagnostico()](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/trathea_core/ai/gemini_service.py#86-112) — hipóteses + CID-10
+  - [sugerir_prescricao()](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/trathea_core/ai/gemini_service.py#113-141) — medicamentos com posologia
+  - [resumir_prontuario()](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/trathea_core/ai/gemini_service.py#142-165) — resumo clínico estruturado
+- Todas as respostas incluem **disclaimer** de responsabilidade médica
+
+### 📄 Geração de PDF
+- **WeasyPrint** converte template HTML Django → PDF binário
+- Template: [templates/pdf/receita.html](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/templates/pdf/receita.html)
+- Endpoint: `GET /api/receitas/{id}/pdf/`
+- Retorna `Content-Type: application/pdf` (download direto)
+
+### ✍️ Assinatura Digital Gov.br (PAdES)
+- Integração com a API de assinatura do ITI (`assinatura.iti.br`)
+- OAuth2 via `sso.acesso.gov.br`
+- Permissão especial [IsGovBrLinked](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/trathea_core/auth/permissions.py#131-148) obrigatória
+- Assinatura armazenada em `Receita.assinatura_govbr` (campo BinaryField)
+- Tarefa assíncrona via Celery
+
+### 📦 Utilitários de Resposta
+Todas as views usam helpers padronizados de `trathea_core.utils.response`:
+
+```python
+api_success(data, message)    # 200
+api_created(data, message)    # 201
+api_error(message, errors, http_status)  # 400/403/500
+api_not_found(message)        # 404
+```
+
+### 📑 Paginação
+`TratheaPagination` com `page_size=20`, padrão em todas as listagens.
+
+---
+
+## 8. Configurações por Ambiente
+
+| Configuração | Dev | Prod |
+|---|---|---|
+| `DEBUG` | `True` | `False` |
+| Banco de dados | SQLite (local) | PostgreSQL |
+| Static files | Django dev server | WhiteNoise (comprimido) |
+| Email backend | Console (terminal) | SMTP real |
+| HTTPS | Não | Sim (redirect forçado) |
+| Logs | Console | Arquivo `logs/trathea.log` + console |
+| Celery broker | Redis local | Redis (configurável) |
+
+---
+
+## 9. Fluxo de Dados — Principais Operações
+
+### Autenticação
+```
+POST /api/auth/login/
+  → Valida email + senha
+  → Verifica is_active e is_verified
+  → Retorna { access_token, refresh_token, user: { role, nome, ... } }
+```
+
+### Criação de Receita
+```
+POST /api/receitas/  [IsDoctor]
+  → ReceitaCreateSerializer.validate()
+  → Receita.save() com status='rascunho'
+  → AuditLog (log manual)
+  → Retorna ReceitaSerializer data (201)
+```
+
+### Download de PDF
+```
+GET /api/receitas/{id}/pdf/  [IsAuthenticated + RBAC]
+  → Busca Receita com related data
+  → Verifica role (médico dono / paciente dono / admin)
+  → _gerar_pdf_bytes() → render HTML template → WeasyPrint
+  → HttpResponse(pdf, content_type='application/pdf')
+```
+
+### Assinatura Gov.br
+```
+POST /api/receitas/{id}/assinar/  [IsDoctor + IsGovBrLinked]
+  → Verifica pode_ser_assinada
+  → GovBrAssinarService.assinar(receita)
+     → Gera PDF
+     → Envia para API ITI Gov.br
+     → Recebe assinatura PAdES
+  → Salva: assinatura_govbr, via_govbr=True, status='assinada'
+  → Celery task (async)
+```
+
+### Verificação Pública (QR Code)
+```
+GET /verificar/{hash}/  [SEM autenticação]
+  → Busca Receita por hash_verificacao
+  → Retorna dados básicos para confirmação de autenticidade
+```
+
+---
+
+## 10. Infraestrutura de Produção (recomendada)
+
+```
+Internet
+   │
+   ▼
+[Nginx / Caddy]  — HTTPS, proxy reverso, static files
+   │
+   ├─────────────────────────────────────────────►
+   │                                              │
+   ▼                                              ▼
+[Gunicorn]                                  [Celery Worker]
+[Django App]                                (tarefas async)
+   │                                              │
+   ├──────────────────────────────────────────────┤
+   ▼                                              ▼
+[PostgreSQL]                                  [Redis]
+(dados)                                    (broker + results)
+```
+
+**Dependências de sistema Linux para WeasyPrint:**
+```bash
+apt-get install -y libpango-1.0-0 libharfbuzz0b libpangoft2-1.0-0 libpangocairo-1.0-0
+```
+
+---
+
+## 11. Variáveis de Ambiente ([.env](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/.env))
+
+| Variável | Descrição | Exemplo |
+|---|---|---|
+| `SECRET_KEY` | Chave secreta Django | `django-insecure-...` |
+| `DEBUG` | Modo de debug | `True` / `False` |
+| `ALLOWED_HOSTS` | Hosts permitidos | `trathea.app,www.trathea.app` |
+| `DB_NAME` | Nome do banco (prod) | `trathea_db` |
+| `DB_USER` | Usuário do banco | `trathea_user` |
+| `DB_PASSWORD` | Senha do banco | `***` |
+| `DB_HOST` | Host do banco | `localhost` |
+| `CORS_ALLOWED_ORIGINS` | Origins do frontend | `https://trathea.app` |
+| `JWT_ACCESS_TOKEN_LIFETIME_MINUTES` | Vida do access token | `15` |
+| `JWT_REFRESH_TOKEN_LIFETIME_DAYS` | Vida do refresh token | `7` |
+| `CELERY_BROKER_URL` | URL do Redis (broker) | `redis://localhost:6379/0` |
+| `GEMINI_API_KEY` | Chave da API Gemini | `AIza...` |
+| `GOVBR_CLIENT_ID` | Client ID Gov.br | `...` |
+| `GOVBR_CLIENT_SECRET` | Secret Gov.br | `***` |
+| `EMAIL_HOST_USER` | Email SMTP | `noreply@trathea.app` |
+| `EMAIL_HOST_PASSWORD` | Senha SMTP | `***` |
+| `FRONTEND_URL` | URL do frontend | `https://trathea.app` |
+
+---
+
+> [!NOTE]
+> O arquivo [trathea_backend_map.txt](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/trathea_backend_map.txt) (57 KB) na raiz do projeto contém o mapa completo e detalhado de todos os arquivos gerado automaticamente — útil como referência rápida de localização de código.
+
+> [!TIP]
+> Para rodar localmente: copie [.env.example](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/.env.example) para [.env](file:///c:/Users/linik/OneDrive/Documentos/new/Trathea-BackEnd/.env), ative o `.venv` e execute `python manage.py runserver --settings=trathea_orchestrator.settings.dev`

@@ -1,0 +1,14 @@
+[
+  {
+    "id": 9,
+    "email": "liniker.rafael00@gmail.com",
+    "nome_completo": "Liniker Oliva",
+    "is_paciente": false
+  },
+  {
+    "id": 1,
+    "email": "liniker.oliva123@gmail.com",
+    "nome_completo": "liniker Teste",
+    "is_paciente": true
+  }
+]

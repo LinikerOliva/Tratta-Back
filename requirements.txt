@@ -1,0 +1,54 @@
+# ============================================================
+# TRATHEA BACKEND — requirements.txt
+# Stack: Django 4.2 + DRF + JWT + Gov.br + PostgreSQL
+# ============================================================
+
+# ── Framework ──────────────────────────────────────────────
+django>=4.2,<5.0
+djangorestframework>=3.14
+djangorestframework-simplejwt>=5.3
+django-cors-headers>=4.0
+
+# ── Banco de Dados ──────────────────────────────────────────
+# psycopg2-binary>=2.9  # PostgreSQL (produção) — remova o comentário se usar PostgreSQL
+# SQLite mantido para dev local (nativo Django)
+
+# ── OpenAPI / Swagger ───────────────────────────────────────
+drf-spectacular>=0.27
+
+# ── PDF ─────────────────────────────────────────────────────
+weasyprint>=60.0             # HTML → PDF — funciona nativamente no Linux
+# pyhanko>=0.20              # assinatura PAdES — dependências complexas no Windows
+
+# ── Gov.br / Criptografia ───────────────────────────────────
+requests>=2.31             # chamadas HTTP à API Gov.br
+cryptography>=41.0         # SHA-256, hash de documentos
+python-jose[cryptography]>=3.3  # decodificação JWT Gov.br
+
+# ── IA ──────────────────────────────────────────────────────
+google-generativeai>=0.5   # Gemini API
+
+# ── Rate Limiting ────────────────────────────────────────────
+django-ratelimit>=4.0
+
+# ── Celery (tarefas assíncronas — assinatura Gov.br) ────────
+celery>=5.3
+redis>=5.0
+django-celery-results>=2.5
+
+# ── Segurança / Produção ─────────────────────────────────────
+Pillow>=10.0               # processamento de imagens
+python-decouple>=3.8       # variáveis de ambiente (.env)
+gunicorn>=21.0             # servidor WSGI produção
+whitenoise>=6.6            # servir static files em produção
+
+# ── Utilitários de Dev ────────────────────────────────────────
+django-extensions>=3.2
+
+# ── Qualidade de Código ───────────────────────────────────────
+black>=24.0
+flake8>=7.0
+isort>=5.13
+pytest-django>=4.7
+factory-boy>=3.3
+coverage>=7.4

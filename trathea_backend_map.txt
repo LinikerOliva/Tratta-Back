@@ -1,0 +1,1094 @@
+================================================================================
+  TRATHEA — MAPEAMENTO ARQUITETURAL DO BACK-END v2.0
+  Arquiteto Sênior: Antigravity  |  Revisado: 24/02/2026
+  Stack: Django 4.x + DRF + SimpleJWT + drf-spectacular (OpenAPI)
+  Missão: Migrar "blocão" meu_app → Arquitetura Modular Profissional
+================================================================================
+
+LEGENDA:
+  🚨 = Problema crítico de arquitetura
+  ⚠️  = Atenção / débito técnico
+  ✅  = Bom — pode ser reaproveitado
+  🔵  = Candidato ao Trathea-Core
+  📦  = Candidato a módulo próprio
+  🆕  = Novo componente a ser criado
+  🏛️  = Gov.br / Integração Federal
+  🔐  = Componente de Segurança
+
+================================================================================
+SEÇÃO 1 — DIAGNÓSTICO DA ESTRUTURA ATUAL (legado)
+================================================================================
+
+tcc-back/  (BLOCÃO ATUAL — PRÉ-MIGRAÇÃO)
+├── manage.py                        (691B  — entry point Django)
+├── db.sqlite3                       (585KB — banco ÚNICO, tudo junto ⚠️)
+├── requirements.txt                 (658B  — dependências desatualizadas)
+├── API_DOCUMENTATION.md             (4.3KB — doc parcial ✅)
+├── register.json                    (2B    — provavelmente vazio)
+├── certificates/                    (diretório de certs físicos)
+├── media/                           (uploads de arquivos)
+│
+├── medicine_back/                   ← CONFIGURAÇÕES GLOBAIS
+│   ├── __init__.py
+│   ├── settings.py                  (7.852B — config monolítica ⚠️)
+│   ├── urls.py                      (809B  — URL raiz, aponta tudo para meu_app)
+│   ├── wsgi.py                      (177B)
+│   └── asgi.py                      (177B  — pronto para async ✅)
+│
+└── meu_app/                         ← O BLOCÃO 🚨
+    ├── models.py                    (27.311B — TODOS os modelos juntos 🚨)
+    ├── serializers.py               (18.696B — TODOS os serializers juntos 🚨)
+    ├── urls.py                      (6.792B  — TODAS as rotas num arquivo 🚨)
+    ├── admin.py                     (4.401B  — painel admin Django)
+    │
+    ├── views/
+    │   ├── auth.py                  (20.254B — autenticação + tokens)
+    │   ├── receitas.py              (55.581B — 🚨 CRÍTICO: receitas + PDF + assinatura)
+    │   ├── consultas.py             (15.770B — consultas médicas)
+    │   ├── ai_gemini.py             (13.471B — integração Gemini AI)
+    │   ├── doctors.py               (10.205B — médicos)
+    │   ├── clinics.py               (9.974B  — clínicas)
+    │   ├── solicitacoes.py          (8.537B  — fluxo de aprovação)
+    │   ├── pdf_generator.py         (7.469B  — geração de PDFs)
+    │   ├── secretarias.py           (6.771B  — secretaria)
+    │   ├── certificados.py          (4.779B  — certificados digitais)
+    │   ├── patients.py              (4.194B  — pacientes)
+    │   ├── users.py                 (4.245B  — usuários)
+    │   ├── audit.py                 (821B    — auditoria básica ✅)
+    │   ├── exames.py                (1.729B)
+    │   ├── prontuarios.py           (1.157B)
+    │   ├── agendamentos.py          (1.125B)
+    │   ├── search.py                (1.131B)
+    │   └── common.py                (249B    — utilitários mínimos)
+    │
+    ├── services/
+    │   ├── certificate_manager.py   (9.873B  — gestão de certificados ✅)
+    │   └── digital_signature_service.py (18.069B — DESCONTINUAR → Gov.br 🚨)
+    │
+    └── urls/
+        └── pdf_urls.py              (238B   — rotas de PDF ✅)
+
+
+================================================================================
+SEÇÃO 2 — NOVA ARQUITETURA ALVO (TRATHEA MODULAR)
+================================================================================
+
+  Princípios Aplicados:
+  ─────────────────────
+  • Single Responsibility (SOLID-S): cada módulo tem um domínio
+  • DRY: utilitários globais vivem no trathea_core/
+  • RBAC: permissões por role NO NÍVEL DO ENDPOINT (não só na view)
+  • API-First: todo endpoint documentado via OpenAPI/Swagger
+  • Zero Trust: JWT curto (15min) + Refresh Token (7 dias, rotativo)
+  • Resposta Padronizada: {"success": bool, "data": {}, "message": "", "errors": []}
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │               TRATHEA — DIAGRAMA DE MÓDULOS                        │
+  │                                                                     │
+  │   CLIENT (React)                                                    │
+  │       │                                                             │
+  │       ▼                                                             │
+  │   ┌──────────────────────────────────────────────────────────┐     │
+  │   │         trathea_orchestrator (Django Project)            │     │
+  │   │   settings/{base,dev,prod}.py  |  urls.py (gateway)     │     │
+  │   │   middleware/ (auth, rate-limit, audit, cors)            │     │
+  │   └──────┬───────────────────────────────────────────────────┘     │
+  │          │ inclui                                                   │
+  │     ┌────┴────────────────────────────────────────────────┐        │
+  │     ▼                                                       ▼       │
+  │ ┌──────────────┐    ┌──────────────────────────────────────────┐   │
+  │ │ trathea_core │    │  Apps Modulares (Django Apps)            │   │
+  │ │ (pacote pip) │    │                                          │   │
+  │ │              │    │  • core_app  (CustomUser, RBAC)          │   │
+  │ │ • auth/      │    │  • medico_app                            │   │
+  │ │ • audit/     │    │  • paciente_app                          │   │
+  │ │ • pdf/       │    │  • clinica_app                           │   │
+  │ │ • signature/ │    │  • secretaria_app                        │   │
+  │ │   (Gov.br)   │    │  • prescricao_app (receitas)             │   │
+  │ │ • ai/        │    │  • admin_app                             │   │
+  │ │ • search/    │    │  • consulta_app                          │   │
+  │ │ • utils/     │    │                                          │   │
+  │ └──────────────┘    └──────────────────────────────────────────┘   │
+  │                                                                     │
+  │   Banco: PostgreSQL (meta: migrar do SQLite)                        │
+  └─────────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+SEÇÃO 3 — TRATHEA_CORE (Biblioteca Compartilhada)
+================================================================================
+
+  trathea_core/
+  ├── __init__.py
+  │
+  ├── auth/                          🔐 JWT + RBAC
+  │   ├── __init__.py
+  │   ├── permissions.py             → IsDoctor, IsPatient, IsClinic,
+  │   │                                IsSecretary, IsAdminUser, IsOwner
+  │   ├── jwt_config.py              → ACCESS_TOKEN_LIFETIME=15min
+  │   │                                REFRESH_TOKEN_LIFETIME=7d (rotativo)
+  │   └── rbac.py                    → decoradores @require_role('medico')
+  │
+  ├── audit/                         🔐 Auditoria centralizada
+  │   ├── __init__.py
+  │   ├── audit.py                   → função log_audit(user, acao, modelo, pk, ip)
+  │   ├── middleware.py              → AuditMiddleware (loga todas as escritas)
+  │   └── models.py                  → LogAuditoria (acao, ip, timestamp, user)
+  │
+  ├── pdf/                           🔵 Geração de PDFs (extraído de views/)
+  │   ├── __init__.py
+  │   ├── pdf_generator.py           → gerar_pdf_receita(), gerar_pdf_prontuario()
+  │   ├── pdf_signer.py              → acoplador de assinatura PAdES ao PDF
+  │   └── templates/                 → templates HTML para renderização PDF
+  │
+  ├── signature/                     🏛️ Gov.br (SUBSTITUIÇÃO TOTAL)
+  │   ├── __init__.py
+  │   ├── govbr_oauth.py             → OAuth2: obter token do usuário no Gov.br
+  │   ├── govbr_signature.py         → enviar hash → receber PAdES assinado
+  │   ├── certificate_manager.py     → (migrado de meu_app/services/)
+  │   └── hash_utils.py              → calcular SHA-256 do documento
+  │
+  ├── ai/                            🔵 Integração Gemini AI
+  │   ├── __init__.py
+  │   └── gemini_service.py          → (migrado de views/ai_gemini.py)
+  │
+  ├── search/                        🔵 Busca global
+  │   ├── __init__.py
+  │   └── search_service.py          → (migrado de views/search.py)
+  │
+  └── utils/                         🔵 Utilitários globais
+      ├── __init__.py
+      ├── response.py                → api_success(), api_error()
+      │                                Padrão: {"success", "data", "message", "errors"}
+      ├── validators.py              → CPF, CRM, CNPJ validators
+      ├── sanitizers.py              → strip HTML/XSS de inputs de texto
+      └── exceptions.py             → TratheaAPIException handler global
+
+
+================================================================================
+SEÇÃO 4 — APPS DJANGO (Módulos por Domínio)
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+4.1  core_app  (CustomUser + RBAC Global)
+────────────────────────────────────────────────────────────────────────────────
+
+  core_app/
+  ├── models.py
+  │     CustomUser:
+  │       email (unique, login field)
+  │       role  (choices: admin | medico | paciente | secretaria | clinica)
+  │       is_active, is_verified
+  │       created_at, updated_at
+  │
+  │     UserProfile:
+  │       user (OneToOne → CustomUser)
+  │       foto, cpf (unique), telefone, endereco
+  │       data_nascimento, genero
+  │
+  ├── serializers.py
+  │     CustomUserSerializer, UserProfileSerializer
+  │     RegisterSerializer (valida CPF, email único, role permitida)
+  │     ChangePasswordSerializer
+  │
+  ├── views/
+  │     auth.py     → login, logout, refresh, me, register, change-password
+  │     users.py    → CRUD usuários (admin only)
+  │
+  └── urls.py
+        /api/auth/login/
+        /api/auth/logout/
+        /api/auth/refresh/
+        /api/auth/me/
+        /api/auth/register/
+        /api/auth/change-password/
+        /api/users/
+        /api/users/{id}/
+
+────────────────────────────────────────────────────────────────────────────────
+4.2  medico_app
+────────────────────────────────────────────────────────────────────────────────
+
+  medico_app/
+  ├── models.py
+  │     Medico:
+  │       user (OneToOne → CustomUser[role='medico'])
+  │       crm (unique), especialidade
+  │       assinatura_img (campo para imagem da assinatura manual)
+  │       govbr_sub (subject Gov.br OAuth, nullable)
+  │       govbr_token_cache (JSONField, encrypted)
+  │       is_govbr_linked (bool)
+  │       clinica_principal (FK → Clinica, nullable)
+  │
+  │     Disponibilidade:
+  │       medico (FK → Medico)
+  │       dia_semana (0–6), hora_inicio, hora_fim
+  │       ativo (bool)
+  │
+  ├── serializers.py
+  │     MedicoSerializer, DisponibilidadeSerializer
+  │     MedicoPublicoSerializer (dados sem info sensível)
+  │
+  ├── services/
+  │     disponibilidade_service.py → calcular_slots_livres()
+  │
+  ├── views/
+  │     doctors.py         → CRUD médico (admin + próprio médico)
+  │     disponibilidade.py → definir/consultar agenda
+  │
+  └── urls.py
+        /api/doctors/
+        /api/doctors/{id}/
+        /api/doctors/{id}/pacientes/
+        /api/doctors/{id}/consultas/
+        /api/doctors/{id}/receitas/
+        /api/doctors/{id}/disponibilidade/
+
+────────────────────────────────────────────────────────────────────────────────
+4.3  paciente_app
+────────────────────────────────────────────────────────────────────────────────
+
+  paciente_app/
+  ├── models.py
+  │     Paciente:
+  │       user (OneToOne → CustomUser[role='paciente'])
+  │       cpf (unique), data_nascimento
+  │       plano_saude, numero_carteirinha
+  │       medico_responsavel (FK → Medico, nullable)
+  │
+  │     HistoricoMedico:
+  │       paciente (FK → Paciente)
+  │       descricao, data, criado_por (FK → CustomUser)
+  │
+  │     Prontuario:
+  │       consulta (FK → Consulta)
+  │       paciente (FK → Paciente)
+  │       medico (FK → Medico)
+  │       anamnese (TextField)
+  │       diagnostico (TextField)
+  │       cid10 (CharField, opcional)
+  │       created_at, updated_at
+  │
+  ├── serializers.py
+  │     PacienteSerializer, HistoricoMedicoSerializer, ProntuarioSerializer
+  │
+  ├── views/
+  │     patients.py     → CRUD paciente
+  │     prontuarios.py  → CRUD prontuário (medico + paciente leitura)
+  │     historico.py    → histórico médico
+  │
+  └── urls.py
+        /api/patients/
+        /api/patients/{id}/
+        /api/patients/{id}/historico/
+        /api/patients/{id}/prontuario/
+        /api/patients/{id}/receitas/
+        /api/patients/{id}/exames/
+        /api/patients/{id}/consultas/
+        /api/prontuarios/
+        /api/prontuarios/{id}/
+
+────────────────────────────────────────────────────────────────────────────────
+4.4  clinica_app
+────────────────────────────────────────────────────────────────────────────────
+
+  clinica_app/
+  ├── models.py
+  │     Clinica:
+  │       user (OneToOne → CustomUser[role='clinica'])
+  │       nome, cnpj (unique), logo
+  │       endereco, telefone, email_contato
+  │       is_ativa (bool)
+  │
+  │     ClinicaMedico:
+  │       clinica (FK → Clinica)
+  │       medico (FK → Medico)
+  │       data_inicio, data_fim (nullable)
+  │       ativo (bool)
+  │       unique_together: (clinica, medico)
+  │
+  │     Secretaria:
+  │       user (OneToOne → CustomUser[role='secretaria'])
+  │       clinica (FK → Clinica)
+  │       nivel_acesso (choices: basico | completo)
+  │
+  ├── serializers.py
+  │     ClinicaSerializer, ClinicaMedicoSerializer, SecretariaSerializer
+  │
+  ├── views/
+  │     clinics.py      → CRUD clínica
+  │     secretarias.py  → CRUD secretaria + agenda
+  │
+  └── urls.py
+        /api/clinics/
+        /api/clinics/{id}/
+        /api/clinics/{id}/medicos/
+        /api/clinics/{id}/pacientes/
+        /api/clinics/{id}/disponibilidade/
+        /api/clinics/{id}/relatorios/
+        /api/secretarias/
+        /api/secretarias/{id}/
+        /api/secretarias/{id}/agenda/
+        /api/secretarias/{id}/solicitacoes/
+
+────────────────────────────────────────────────────────────────────────────────
+4.5  consulta_app
+────────────────────────────────────────────────────────────────────────────────
+
+  consulta_app/
+  ├── models.py
+  │     Consulta:
+  │       medico (FK → Medico)
+  │       paciente (FK → Paciente)
+  │       secretaria (FK → Secretaria, nullable)
+  │       clinica (FK → Clinica, nullable)
+  │       data, hora
+  │       status (choices: agendada|confirmada|em_andamento|concluida|cancelada)
+  │       tipo (choices: presencial|teleconsulta|retorno)
+  │       valor (DecimalField, nullable)
+  │       observacoes (TextField, nullable)
+  │       created_at, updated_at
+  │
+  │     Agendamento:
+  │       consulta (OneToOne → Consulta)
+  │       data_solicitacao, confirmado_em
+  │       canal (choices: web|mobile|secretaria)
+  │
+  ├── serializers.py
+  │     ConsultaSerializer, AgendamentoSerializer
+  │     ConsultaCreateSerializer (com validação de conflito de agenda)
+  │
+  ├── services/
+  │     consulta_service.py → verificar_conflito(), confirmar_consulta()
+  │
+  ├── views/
+  │     consultas.py    → CRUD completo
+  │     agendamentos.py → agendamento público
+  │
+  └── urls.py
+        /api/consultas/
+        /api/consultas/{id}/
+        /api/consultas/{id}/status/    [PATCH]
+        /api/agendamentos/
+        /api/agendamentos/{id}/
+
+────────────────────────────────────────────────────────────────────────────────
+4.6  prescricao_app  (PRIORIDADE MÁXIMA — substitui receitas.py 55KB)
+────────────────────────────────────────────────────────────────────────────────
+
+  prescricao_app/
+  ├── models.py
+  │     Medicamento:
+  │       nome, principio_ativo, concentracao
+  │       tipo (choices: simples|controlado|antimicrobiano)
+  │       registro_anvisa (opcional)
+  │
+  │     Receita:
+  │       medico (FK → Medico)
+  │       paciente (FK → Paciente)
+  │       consulta (FK → Consulta, nullable)
+  │       data_emissao (auto_now_add)
+  │       tipo (choices: simples|controlada|antimicrobiano)
+  │       status (choices: rascunho|emitida|assinada|cancelada|expirada)
+  │       via_govbr (bool — indica se foi assinada pelo Gov.br)
+  │       hash_conteudo  (SHA-256 do conteúdo serializado)
+  │       hash_verificacao (SHA-256 público para QR Code)
+  │       assinatura_govbr (BinaryField — PAdES retornado pelo Gov.br)
+  │       pdf_path (FileField)
+  │       validade_dias (int, default=30)
+  │       created_at, updated_at
+  │
+  │     ItemReceita:
+  │       receita (FK → Receita, related_name='itens')
+  │       medicamento (FK → Medicamento)
+  │       dosagem, posologia, quantidade
+  │       via_administracao (ex: oral, IV, tópica)
+  │       duracao_tratamento (dias)
+  │       instrucoes_especiais (TextField, nullable)
+  │
+  │     TemplateReceita:
+  │       medico (FK → Medico)
+  │       nome, descricao
+  │       tipo_receita (FK tipo)
+  │       itens_json (JSONField — snapshot dos itens)
+  │       created_at
+  │
+  ├── serializers.py
+  │     MedicamentoSerializer
+  │     ItemReceitaSerializer
+  │     ReceitaSerializer (leitura)
+  │     ReceitaCreateSerializer (escrita + validação)
+  │     TemplateReceitaSerializer
+  │
+  ├── services/
+  │   ├── receita_service.py         → criar_receita(), calcular_validade(),
+  │   │                                verificar_expirada()
+  │   ├── hash_service.py            → gerar_hash_conteudo(), verificar_hash()
+  │   ├── pdf_prescricao_service.py  → gerar_pdf() chama trathea_core/pdf/
+  │   ├── govbr_assinar_service.py   → orquestrar fluxo completo Gov.br:
+  │   │                                1. calcular hash
+  │   │                                2. obter token OAuth2 médico
+  │   │                                3. enviar hash → Gov.br API
+  │   │                                4. receber PAdES
+  │   │                                5. acoplar PAdES ao PDF
+  │   │                                6. atualizar receita.status = 'assinada'
+  │   └── envio_service.py           → enviar_receita_paciente() (email/SMS)
+  │
+  ├── views/
+  │   ├── receita_crud.py            → ListCreateAPIView, RetrieveUpdateDestroyAPIView
+  │   ├── receita_assinatura.py      → POST /receitas/{id}/assinar/ (Gov.br flow)
+  │   ├── receita_pdf.py             → GET /receitas/{id}/pdf/
+  │   ├── receita_verificacao.py     → GET /verificar/{hash}/ (PÚBLICO, sem auth)
+  │   ├── receita_envio.py           → POST /receitas/{id}/enviar/
+  │   └── medicamentos.py            → buscar medicamentos (autocomplete)
+  │
+  └── urls.py
+        /api/receitas/
+        /api/receitas/{id}/
+        /api/receitas/{id}/assinar/        [POST] → Gov.br OAuth2 flow
+        /api/receitas/{id}/verificar/      [GET]  → autenticidade
+        /api/receitas/{id}/pdf/            [GET]  → download PDF assinado
+        /api/receitas/{id}/enviar/         [POST] → envio ao paciente
+        /api/receitas/templates/           [GET/POST]
+        /api/medicamentos/                 [GET]
+        /api/medicamentos/buscar/          [GET] ?q=...
+        /api/verificar/{hash}/             [GET]  com auth anon → QR Code público
+
+────────────────────────────────────────────────────────────────────────────────
+4.7  exame_app
+────────────────────────────────────────────────────────────────────────────────
+
+  exame_app/
+  ├── models.py
+  │     Exame:
+  │       paciente (FK → Paciente)
+  │       medico_solicitante (FK → Medico, nullable)
+  │       tipo (CharField)
+  │       resultado (TextField, nullable)
+  │       arquivo (FileField, nullable)
+  │       data_coleta, data_resultado
+  │       status (choices: solicitado|coletado|disponivel)
+  │
+  ├── serializers.py
+  │     ExameSerializer
+  │
+  ├── views/
+  │     exames.py → CRUD exames
+  │
+  └── urls.py
+        /api/exames/
+        /api/exames/{id}/
+
+────────────────────────────────────────────────────────────────────────────────
+4.8  admin_app
+────────────────────────────────────────────────────────────────────────────────
+
+  admin_app/
+  ├── models.py
+  │     Solicitacao:
+  │       tipo (choices: cadastro_medico|associacao_clinica|...)
+  │       status (choices: pendente|aprovada|rejeitada)
+  │       solicitante (FK → CustomUser)
+  │       dados_json (JSONField — payload flexível)
+  │       avaliado_por (FK → CustomUser[role='admin'], nullable)
+  │       avaliado_em (DateTimeField, nullable)
+  │       motivo_rejeicao (TextField, nullable)
+  │       created_at
+  │
+  ├── serializers.py
+  │     SolicitacaoSerializer, SolicitacaoAvaliacaoSerializer
+  │
+  ├── services/
+  │     solicitacao_service.py → aprovar(), rejeitar(), notificar()
+  │
+  ├── views/
+  │     dashboard.py    → GET /api/admin/dashboard/
+  │     solicitacoes.py → CRUD + aprovar/rejeitar
+  │     relatorios.py   → relatórios gerenciais
+  │     auditoria.py    → listar LogAuditoria com filtros
+  │
+  └── urls.py
+        /api/admin/dashboard/
+        /api/admin/relatorios/
+        /api/admin/usuarios/
+        /api/solicitacoes/
+        /api/solicitacoes/{id}/
+        /api/solicitacoes/{id}/aprovar/    [PATCH]
+        /api/solicitacoes/{id}/rejeitar/   [PATCH]
+        /api/audit/
+        /api/audit/?user=...&acao=...
+
+
+================================================================================
+SEÇÃO 5 — FLUXO GOV.BR (Assinatura Eletrônica — Prioridade Máxima)
+================================================================================
+
+  DESCONTINUADO:
+  ──────────────
+  ✗ services/digital_signature_service.py (assinatura local com .p12)
+    MOTIVO: Certificados A1/A3 locais exigem hardware específico e manutenção
+    de senha. Gov.br oferece assinatura ICP-Brasil sem custódia de certificado.
+
+  NOVO FLUXO (trathea_core/signature/):
+  ──────────────────────────────────────
+
+  PASSO 1 — VINCULAÇÃO DA CONTA (médico faz uma vez)
+  ────────────────────────────────────────────────────
+  Endpoint: GET /api/auth/govbr/authorize/
+  ├── Backend gera URL de autorização Gov.br OAuth2
+  │   URL: https://sso.staging.acesso.gov.br/authorize
+  │       ?response_type=code
+  │       &client_id={CLIENT_ID}
+  │       &scope=openid+profile+email+govbr_assinatura
+  │       &redirect_uri={CALLBACK_URL}
+  │       &state={state_token}  ← CSRF protection
+  │
+  └── Médico é redirecionado → autentica → Gov.br retorna code
+
+  PASSO 2 — CALLBACK E TROCA DE TOKEN
+  ─────────────────────────────────────
+  Endpoint: GET /api/auth/govbr/callback/?code=...&state=...
+  ├── Verificar state vs sessão (anti-CSRF)
+  ├── POST → https://sso.staging.acesso.gov.br/token
+  │   Body: grant_type=authorization_code, code, redirect_uri
+  │   → Retorno: access_token (gov.br), sub (CPF hash)
+  ├── Validar CPF do Gov.br == CPF do médico logado no Trathea
+  ├── Salvar Medico.govbr_sub e Medico.is_govbr_linked = True
+  └── Resposta: {"success": true, "data": {"linked": true}, "message": "..."}
+
+  PASSO 3 — ASSINAR RECEITA
+  ──────────────────────────
+  Endpoint: POST /api/receitas/{id}/assinar/
+  Permissão: IsDoctor + IsOwnerOfReceita + is_govbr_linked
+  ├── [Service] hash_service.gerar_hash_conteudo(receita)
+  │   → SHA-256 do JSON canônico da receita
+  ├── [Service] govbr_oauth.obter_token_assinatura(medico)
+  │   → POST https://sso.acesso.gov.br/token (grant=client_credentials
+  │             ou refresh do token do médico)
+  ├── [Service] govbr_signature.solicitar_assinatura(hash, token)
+  │   → POST https://assinatura.staging.iti.br/externo/pdf/assinar
+  │   Body: {"hashDocumento": "...", "algoritmo": "SHA256withRSA"}
+  │   → Retorno: {"assinatura": "<base64 PAdES>"}
+  ├── [Service] pdf_prescricao_service.gerar_pdf(receita)
+  │   → trathea_core/pdf/pdf_generator.py
+  ├── [Service] pdf_signer.acoplar_pades(pdf_bytes, assinatura_base64)
+  │   → PDF final com assinatura PAdES válida ICP-Brasil
+  ├── Salvar: Receita.assinatura_govbr, .pdf_path, .status='assinada'
+  ├── [Audit] log_audit(user=medico, acao='ASSINAR_RECEITA', pk=receita.id)
+  └── Resposta: {"success": true, "data": {"pdf_url": "..."}, "message": "..."}
+
+  VARIÁVEIS DE AMBIENTE NECESSÁRIAS:
+  ────────────────────────────────────
+  GOVBR_CLIENT_ID=...
+  GOVBR_CLIENT_SECRET=...
+  GOVBR_REDIRECT_URI=https://trathea.app/api/auth/govbr/callback/
+  GOVBR_AUTH_URL=https://sso.staging.acesso.gov.br/authorize
+  GOVBR_TOKEN_URL=https://sso.staging.acesso.gov.br/token
+  GOVBR_SIGNATURE_URL=https://assinatura.staging.iti.br/externo/pdf/assinar
+
+
+================================================================================
+SEÇÃO 6 — SEGURANÇA E RBAC
+================================================================================
+
+  6.1  JWT Configuration
+  ──────────────────────
+  # trathea_core/auth/jwt_config.py
+
+  SIMPLE_JWT = {
+      "ACCESS_TOKEN_LIFETIME":  timedelta(minutes=15),   # curto
+      "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+      "ROTATE_REFRESH_TOKENS":  True,     # novo refresh a cada uso
+      "BLACKLIST_AFTER_ROTATION": True,   # invalida o anterior
+      "UPDATE_LAST_LOGIN": True,
+      "ALGORITHM": "HS256",
+      "AUTH_HEADER_TYPES": ("Bearer",),
+      "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
+  }
+
+  6.2  Permissões RBAC (DRF BasePermission)
+  ──────────────────────────────────────────
+  # trathea_core/auth/permissions.py
+
+  class IsDoctor(BasePermission):
+      def has_permission(self, request, view):
+          return request.user.is_authenticated and request.user.role == 'medico'
+
+  class IsPatient(BasePermission):
+      def has_permission(self, request, view):
+          return request.user.is_authenticated and request.user.role == 'paciente'
+
+  class IsClinic(BasePermission): ...       # role == 'clinica'
+  class IsSecretary(BasePermission): ...    # role == 'secretaria'
+  class IsAdminUser(BasePermission): ...    # role == 'admin'
+
+  class IsOwner(BasePermission):
+      """Garante que o usuário só acessa seus próprios recursos."""
+      def has_object_permission(self, request, view, obj):
+          return obj.user == request.user
+
+  class IsDoctorOrReadOnly(BasePermission):
+      """Médico escreve, paciente/secretaria lê."""
+      def has_permission(self, request, view):
+          if request.method in SAFE_METHODS:
+              return request.user.is_authenticated
+          return request.user.role == 'medico'
+
+  USO NAS VIEWS:
+  class ReceitaViewSet(ModelViewSet):
+      permission_classes = [IsAuthenticated, IsDoctor, IsOwner]
+      # → Paciente com role='paciente' recebe 403 Forbidden automaticamente
+
+  6.3  Sanitização e Proteção
+  ────────────────────────────
+  SQL Injection:  → Apenas ORM Django (nunca raw SQL sem parameterização)
+  XSS:           → DRF valida e serializa todos os inputs
+                   → trathea_core/utils/sanitizers.py limpa campos de texto
+  CSRF:          → Django CSRF middleware ativado para sessão
+                   → JWT Bearer não precisam de CSRF (stateless)
+                   → SessionAuthentication usa enforce_csrf()
+  Rate Limiting: → django-ratelimit em endpoints críticos
+                   (login: 10/min, assinar: 5/min)
+
+  6.4  Auditoria Obrigatória
+  ───────────────────────────
+  Auditar SEMPRE:
+  ✓ LOGIN / LOGOUT
+  ✓ ASSINAR_RECEITA (via Gov.br)
+  ✓ CRIAR/EDITAR/DELETAR Prontuário
+  ✓ CRIAR/EDITAR/DELETAR Receita
+  ✓ APROVAR/REJEITAR Solicitação
+  ✓ ALTERAR_SENHA
+  ✓ VINCULAR_GOVBR
+  ✓ EXPORT_RELATORIO
+
+  LogAuditoria (em trathea_core/audit/models.py):
+    usuario     (FK → CustomUser, null para ações de sistema)
+    acao        (CharField — ASSINAR_RECEITA, CRIAR_PRONTUARIO, etc.)
+    modelo      (CharField — 'Receita', 'Prontuario', etc.)
+    pk_objeto   (CharField — ID do objeto afetado)
+    ip_address  (GenericIPAddressField)
+    user_agent  (TextField, nullable)
+    timestamp   (auto_now_add)
+    dados_extra (JSONField, nullable — diff de mudanças)
+
+
+================================================================================
+SEÇÃO 7 — TABELA COMPLETA DE ENDPOINTS (OpenAPI-Ready)
+================================================================================
+
+  Formato: METHOD  /path/  [ROLES PERMITIDAS]  → Handler
+  Padrão de resposta: {"success": bool, "data": {}, "message": "", "errors": []}
+
+  ── AUTH & USUÁRIOS ──────────────────────────────────────────────────────────
+  POST   /api/auth/login/             [*]               → core_app/views/auth.py
+         Body: {email, password}
+         200: {success, data: {access, refresh, user}}
+         401: credenciais inválidas
+
+  POST   /api/auth/logout/            [auth]            → core_app/views/auth.py
+         Body: {refresh}  → blacklist token
+         200: {success, message: "Logout realizado."}
+
+  POST   /api/auth/refresh/           [*]               → SimpleJWT
+         Body: {refresh} → 200: {access}  | 401: token expirado/inválido
+
+  GET    /api/auth/me/                [auth]            → core_app/views/auth.py
+         200: {success, data: {user, profile, role}}
+
+  POST   /api/auth/register/          [*]               → core_app/views/auth.py
+         Body: {email, password, role, nome, cpf}
+         201: {success, data: {user_id}}
+         400: {success: false, errors: {campo: [msg]}}
+
+  POST   /api/auth/change-password/   [auth]            → core_app/views/auth.py
+         Body: {old_password, new_password, confirm}
+
+  GET    /api/auth/govbr/authorize/   [medico]          → core_app/views/govbr.py
+         200: {success, data: {redirect_url}}
+
+  GET    /api/auth/govbr/callback/    [medico, *]       → core_app/views/govbr.py
+         Params: ?code=...&state=...
+         200: {success, data: {linked: true}}
+
+  GET    /api/users/                  [admin]           → core_app/views/users.py
+  GET    /api/users/{id}/             [admin, own]      → core_app/views/users.py
+  PUT    /api/users/{id}/             [admin, own]      → core_app/views/users.py
+  DELETE /api/users/{id}/             [admin]           → core_app/views/users.py
+
+  ── MÉDICOS ──────────────────────────────────────────────────────────────────
+  GET    /api/doctors/                [auth]            → medico_app/views/doctors.py
+  POST   /api/doctors/                [admin]           → medico_app/views/doctors.py
+  GET    /api/doctors/{id}/           [auth]            → medico_app/views/doctors.py
+  PUT    /api/doctors/{id}/           [admin, own]      → medico_app/views/doctors.py
+  DELETE /api/doctors/{id}/           [admin]           → medico_app/views/doctors.py
+  GET    /api/doctors/{id}/pacientes/ [medico, admin]   → medico_app/views/doctors.py
+  GET    /api/doctors/{id}/consultas/ [medico, admin, secretaria]
+  GET    /api/doctors/{id}/receitas/  [medico, admin]
+  GET    /api/doctors/{id}/disponibilidade/ [auth]
+  POST   /api/doctors/{id}/disponibilidade/ [medico, own]
+
+  ── PACIENTES ─────────────────────────────────────────────────────────────────
+  GET    /api/patients/               [medico, admin, secretaria, clinica]
+  POST   /api/patients/               [admin, medico]
+  GET    /api/patients/{id}/          [medico, own-paciente, secretaria]
+  PUT    /api/patients/{id}/          [admin, own-paciente]
+  GET    /api/patients/{id}/historico/ [medico, own-paciente]
+  GET    /api/patients/{id}/prontuario/ [medico, own-paciente]
+  GET    /api/patients/{id}/receitas/   [medico, own-paciente]
+  GET    /api/patients/{id}/exames/     [medico, own-paciente]
+  GET    /api/patients/{id}/consultas/  [medico, own-paciente, secretaria]
+
+  ── PRONTUÁRIOS ───────────────────────────────────────────────────────────────
+  GET    /api/prontuarios/            [medico, admin]
+  POST   /api/prontuarios/            [medico]          → AUDIT: CRIAR_PRONTUARIO
+  GET    /api/prontuarios/{id}/       [medico, own-paciente]
+  PUT    /api/prontuarios/{id}/       [medico]          → AUDIT: EDITAR_PRONTUARIO
+
+  ── CLÍNICAS ──────────────────────────────────────────────────────────────────
+  GET    /api/clinics/                [auth]
+  POST   /api/clinics/                [admin]
+  GET    /api/clinics/{id}/           [auth]
+  PUT    /api/clinics/{id}/           [admin, own-clinica]
+  DELETE /api/clinics/{id}/           [admin]
+  GET    /api/clinics/{id}/medicos/   [auth]
+  GET    /api/clinics/{id}/pacientes/ [clinica, admin, secretaria]
+  GET    /api/clinics/{id}/disponibilidade/ [auth]
+  GET    /api/clinics/{id}/relatorios/ [clinica, admin]
+
+  ── SECRETARIAS ───────────────────────────────────────────────────────────────
+  GET    /api/secretarias/            [admin, clinica]
+  POST   /api/secretarias/            [admin, clinica]
+  GET    /api/secretarias/{id}/       [admin, clinica, own]
+  PUT    /api/secretarias/{id}/       [admin, own]
+  GET    /api/secretarias/{id}/agenda/ [secretaria, own]
+  GET    /api/secretarias/{id}/solicitacoes/ [secretaria, own]
+
+  ── CONSULTAS ─────────────────────────────────────────────────────────────────
+  GET    /api/consultas/              [medico, paciente, secretaria, admin]
+  POST   /api/consultas/              [medico, secretaria, admin]
+  GET    /api/consultas/{id}/         [participantes + admin]
+  PUT    /api/consultas/{id}/         [medico, secretaria] + validação de conflito
+  PATCH  /api/consultas/{id}/status/  [medico, secretaria] → transição de status
+  DELETE /api/consultas/{id}/         [admin]
+  GET    /api/agendamentos/           [auth]
+  POST   /api/agendamentos/           [paciente, secretaria]
+
+  ── RECEITAS (prescricao_app) ─────────────────────────────────────────────────
+  GET    /api/receitas/               [medico, admin]
+  POST   /api/receitas/               [medico]
+         Body: {paciente_id, consulta_id, tipo, itens: [...]}
+         201: {success, data: {receita_id, status: 'rascunho'}}
+
+  GET    /api/receitas/{id}/          [medico-owner, own-paciente, admin]
+  PUT    /api/receitas/{id}/          [medico-owner] status=rascunho only
+  DELETE /api/receitas/{id}/          [medico-owner, admin] status=rascunho only
+
+  POST   /api/receitas/{id}/assinar/  [medico-owner, is_govbr_linked]
+         → AUDIT: ASSINAR_RECEITA
+         → Fluxo completo Gov.br (ver Seção 5, Passo 3)
+         200: {success, data: {pdf_url, hash, status: 'assinada'}}
+         402: médico não vinculado ao Gov.br
+         503: Gov.br indisponível
+
+  GET    /api/receitas/{id}/verificar/ [auth]
+         200: {success, data: {valida, medico, paciente, itens, assinatura_em}}
+
+  GET    /api/receitas/{id}/pdf/       [medico-owner, own-paciente]
+         200: binary PDF (application/pdf)
+
+  POST   /api/receitas/{id}/enviar/    [medico-owner]
+         Body: {canal: 'email'|'sms'|'whatsapp', contato_override?}
+         200: {success, message: "Receita enviada para {email/tel}"}
+
+  GET    /api/verificar/{hash}/        [*] PÚBLICO — sem autenticação
+         → Verificação via QR Code por qualquer pessoa
+         200: {success, data: {valida, medico_nome, medico_crm, itens, emitida_em}}
+         404: hash inválido
+
+  GET    /api/receitas/templates/      [medico]
+  POST   /api/receitas/templates/      [medico]
+  GET    /api/medicamentos/            [medico, secretaria]
+  GET    /api/medicamentos/buscar/     [medico, secretaria] ?q=nome
+
+  ── EXAMES ────────────────────────────────────────────────────────────────────
+  GET    /api/exames/                 [medico, admin]
+  POST   /api/exames/                 [medico]
+  GET    /api/exames/{id}/            [medico, own-paciente]
+  PUT    /api/exames/{id}/            [medico]
+
+  ── SOLICITAÇÕES ──────────────────────────────────────────────────────────────
+  GET    /api/solicitacoes/           [admin, clinica]
+  POST   /api/solicitacoes/           [auth] → criar solicitação
+  GET    /api/solicitacoes/{id}/      [admin, own-solicitante]
+  PATCH  /api/solicitacoes/{id}/aprovar/  [admin]  → AUDIT: APROVAR_SOLICITACAO
+  PATCH  /api/solicitacoes/{id}/rejeitar/ [admin]  → AUDIT: REJEITAR_SOLICITACAO
+
+  ── IA / GEMINI ───────────────────────────────────────────────────────────────
+  POST   /api/ai/anamnese/            [medico]  → sugestão de anamnese
+  POST   /api/ai/sugestao-diagnostico/ [medico] → sugestão de diagnóstico
+  POST   /api/ai/sugestao-receita/    [medico]  → sugestão de receita
+  POST   /api/ai/resumir-prontuario/  [medico]  → resumo do prontuário
+
+  ── PDF ───────────────────────────────────────────────────────────────────────
+  POST   /api/pdf/gerar/              [medico, admin]
+  GET    /api/pdf/{id}/               [medico, own-paciente]
+  GET    /api/pdf/templates/          [medico]
+
+  ── BUSCA ─────────────────────────────────────────────────────────────────────
+  GET    /api/search/?q=...           [auth]  → busca global (pacientes, médicos)
+
+  ── AUDITORIA ─────────────────────────────────────────────────────────────────
+  GET    /api/audit/                  [admin]
+  GET    /api/audit/?user=...&acao=...&start=...&end=...  [admin]
+
+  ── ADMIN ─────────────────────────────────────────────────────────────────────
+  GET    /api/admin/dashboard/        [admin]
+  GET    /api/admin/relatorios/       [admin]
+  GET    /api/admin/usuarios/         [admin]
+
+
+================================================================================
+SEÇÃO 8 — DEPENDÊNCIAS (requirements.txt ATUALIZADO)
+================================================================================
+
+  # Framework
+  django>=4.2,<5.0
+  djangorestframework>=3.14
+  djangorestframework-simplejwt>=5.3
+  django-cors-headers>=4.0
+
+  # Banco
+  psycopg2-binary>=2.9               # PostgreSQL (alvo de migração)
+  # (SQLite mantido para dev local)
+
+  # OpenAPI / Swagger
+  drf-spectacular>=0.27              # gera schema.yml automático
+
+  # PDF
+  weasyprint>=60.0                   # HTML→PDF (melhor para templates complexos)
+  # OU reportlab>=4.0               # programático (melhor performance)
+
+  # Assinatura Gov.br / Criptografia
+  requests>=2.31                     # chamadas HTTP ao Gov.br
+  cryptography>=41.0                 # hash SHA-256
+  pyhanko>=0.20                      # acoplar PAdES ao PDF
+  # NÃO mais: pyOpenSSL, assinatura local
+
+  # IA
+  google-generativeai>=0.5           # Gemini API
+
+  # Rate Limiting
+  django-ratelimit>=4.0
+
+  # Segurança e Produção
+  Pillow>=10.0                       # processamento de imagens
+  python-decouple>=3.8               # variáveis de ambiente
+  gunicorn>=21.0                     # servidor WSGI produção
+  django-extensions>=3.2             # utilitários de dev
+
+  # Qualidade de Código
+  black>=24.0                        # formatação
+  flake8>=7.0                        # linting
+  pytest-django>=4.7                 # testes
+  factory-boy>=3.3                   # fixtures de teste
+
+
+================================================================================
+SEÇÃO 9 — ORQUESTRADOR (trathea_orchestrator — settings/)
+================================================================================
+
+  trathea_orchestrator/
+  ├── settings/
+  │   ├── __init__.py
+  │   ├── base.py                    → configurações comuns a todos os ambientes
+  │   ├── dev.py                     → DEBUG=True, SQLite, email console
+  │   └── prod.py                    → DEBUG=False, PostgreSQL, HTTPS, S3
+  │
+  ├── urls.py                        → gateway de rotas
+  │   from django.urls import path, include
+  │   urlpatterns = [
+  │     path('api/', include([
+  │       path('auth/',      include('core_app.urls')),
+  │       path('users/',     include('core_app.urls_users')),
+  │       path('doctors/',   include('medico_app.urls')),
+  │       path('patients/',  include('paciente_app.urls')),
+  │       path('clinics/',   include('clinica_app.urls')),
+  │       path('consultas/', include('consulta_app.urls')),
+  │       path('receitas/',  include('prescricao_app.urls')),
+  │       path('exames/',    include('exame_app.urls')),
+  │       path('audit/',     include('admin_app.urls_audit')),
+  │       path('admin/',     include('admin_app.urls')),
+  │       path('ai/',        include('trathea_core.ai.urls')),
+  │       path('search/',    include('trathea_core.search.urls')),
+  │       path('verificar/', include('prescricao_app.urls_publ')),
+  │       path('schema/',    SpectacularAPIView.as_view(), name='schema'),
+  │       path('docs/',      SpectacularSwaggerUIView.as_view()),
+  │     ])),
+  │   ]
+  │
+  └── middleware/
+      ├── audit_middleware.py        → intercepta escritas e chama log_audit()
+      └── rate_limit_middleware.py   → rate limiting por IP/usuário
+
+
+================================================================================
+SEÇÃO 10 — PADRÃO DE RESPOSTA DA API
+================================================================================
+
+  Todo endpoint DEVE retornar neste formato:
+
+  SUCESSO:
+  {
+    "success": true,
+    "data": { ... },        ← payload principal
+    "message": "Operação realizada com sucesso.",
+    "errors": []
+  }
+
+  ERRO DE VALIDAÇÃO (400):
+  {
+    "success": false,
+    "data": null,
+    "message": "Dados inválidos.",
+    "errors": {
+      "campo": ["mensagem de erro"]
+    }
+  }
+
+  ERRO DE AUTORIZAÇÃO (403):
+  {
+    "success": false,
+    "data": null,
+    "message": "Acesso negado. Permissão insuficiente.",
+    "errors": []
+  }
+
+  ERRO INTERNO (500):
+  {
+    "success": false,
+    "data": null,
+    "message": "Erro interno. Contate o suporte.",
+    "errors": []
+  }
+
+  Implementação: trathea_core/utils/response.py
+  ─────────────────────────────────────────────
+  def api_success(data=None, message="Sucesso.", status=200):
+      return Response({"success": True, "data": data, "message": message,
+                       "errors": []}, status=status)
+
+  def api_error(message="Erro.", errors=None, status=400):
+      return Response({"success": False, "data": None, "message": message,
+                       "errors": errors or []}, status=status)
+
+  EXCEÇÃO GLOBAL (settings/base.py):
+  REST_FRAMEWORK = {
+      "EXCEPTION_HANDLER": "trathea_core.utils.exceptions.custom_exception_handler"
+  }
+
+
+================================================================================
+SEÇÃO 11 — ROADMAP DE MIGRAÇÃO (FASES)
+================================================================================
+
+  FASE 1 — FUNDAR O CORE (sem quebrar nada existente)
+  ────────────────────────────────────────────────────
+  [ ] Criar diretório trathea_core/ como Django app separada
+  [ ] Criar trathea_core/utils/response.py → api_success(), api_error()
+  [ ] Criar trathea_core/utils/exceptions.py → custom_exception_handler
+  [ ] Criar trathea_core/auth/permissions.py → IsDoctor, IsPatient, ...
+  [ ] Criar trathea_core/auth/jwt_config.py
+  [ ] Criar trathea_core/audit/audit.py → log_audit()
+  [ ] Criar trathea_core/audit/models.py → LogAuditoria
+  [ ] Mover views/pdf_generator.py → trathea_core/pdf/
+  [ ] Mover views/search.py → trathea_core/search/
+  [ ] Mover views/audit.py → trathea_core/audit/ (mesclar)
+  [ ] Mover services/certificate_manager.py → trathea_core/signature/
+  [ ] DESCARTAR services/digital_signature_service.py
+  [ ] Criar trathea_core/signature/govbr_oauth.py
+  [ ] Criar trathea_core/signature/govbr_signature.py
+  [ ] Criar trathea_core/signature/hash_utils.py
+
+  FASE 2 — CRIAR APPS MODULARES
+  ────────────────────────────────
+  [ ] python manage.py startapp core_app
+  [ ] python manage.py startapp medico_app
+  [ ] python manage.py startapp paciente_app
+  [ ] python manage.py startapp clinica_app
+  [ ] python manage.py startapp consulta_app
+  [ ] python manage.py startapp prescricao_app
+  [ ] python manage.py startapp exame_app
+  [ ] python manage.py startapp admin_app
+  [ ] Dividir meu_app/models.py → models de cada app
+  [ ] Dividir meu_app/serializers.py → serializers de cada app
+  [ ] Escrever data migrations para mover dados
+  [ ] Adicionar todos os apps em settings/base.py → INSTALLED_APPS
+
+  FASE 3 — MIGRAR VIEWS (por prioridade)
+  ───────────────────────────────────────
+  [ ] Migrar views/auth.py → core_app/views/auth.py + urls.py
+  [ ] Migrar views/receitas.py → prescricao_app/views/ (5+ arquivos)
+      SIMULTANEAMENTE criar prescricao_app/services/govbr_assinar_service.py
+  [ ] Migrar views/doctors.py → medico_app/views/
+  [ ] Migrar views/patients.py → paciente_app/views/
+  [ ] Migrar views/clinics.py → clinica_app/views/
+  [ ] Migrar views/secretarias.py → clinica_app/views/
+  [ ] Migrar views/consultas.py → consulta_app/views/
+  [ ] Migrar views/ai_gemini.py → trathea_core/ai/
+  [ ] Migrar views/admin.py + solicitacoes.py → admin_app/views/
+
+  FASE 4 — ORQUESTRAÇÃO E SEGURANÇA
+  ───────────────────────────────────
+  [ ] Criar trathea_orchestrator/urls.py (gateway de rotas)
+  [ ] Criar trathea_orchestrator/settings/base.py, dev.py, prod.py
+  [ ] Aplicar permission_classes RBAC em TODOS os endpoints
+  [ ] Aplicar rate limiting nos endpoints críticos
+  [ ] Configurar drf-spectacular + /api/docs/ + /api/schema/
+  [ ] Configurar AuditMiddleware
+  [ ] Configurar CORS, HTTPS redirects, HSTS
+
+  FASE 5 — GOV.BR E ASSINATURA
+  ──────────────────────────────
+  [ ] Registrar app no Portal Gov.br (obter CLIENT_ID e CLIENT_SECRET)
+  [ ] Implementar govbr_oauth.py com fluxo Authorization Code
+  [ ] Implementar govbr_signature.py com chamada à API ITI
+  [ ] Implementar pdf_signer.py com pyhanko para PAdES
+  [ ] Criar endpoint /api/auth/govbr/authorize/ e /callback/
+  [ ] Criar endpoint /api/receitas/{id}/assinar/ completo
+  [ ] Testar com ambiente staging do Gov.br
+  [ ] Endpoint público /api/verificar/{hash}/ funcionando
+
+  FASE 6 — QUALIDADE E PRODUÇÃO
+  ───────────────────────────────
+  [ ] Migrar SQLite → PostgreSQL
+  [ ] Cobertura de testes > 70% (pytest-django + factory-boy)
+  [ ] OpenAPI schema gerado e validado (drf-spectacular)
+  [ ] CI/CD GitHub Actions (lint, test, deploy)
+  [ ] Docker + docker-compose (web, db, redis)
+  [ ] Black + Flake8 no pre-commit hook
+  [ ] Documentar variáveis de ambiente (.env.example)
+
+
+================================================================================
+SEÇÃO 12 — MATRIZ DE RISCOS E MITIGAÇÕES
+================================================================================
+
+  RISCO                           IMPACTO  MITIGAÇÃO
+  ─────────────────────────────── ──────── ─────────────────────────────────────
+  Gov.br fora do ar               ALTO     Fallback: modo rascunho (assinar depois)
+  PDF com assinatura inválida     ALTO     Testes com pyhanko + validador ITI
+  Migrations de dados incorretas  CRÍTICO  Backup + data migrations com testes
+  JWT comprometido                CRÍTICO  Blacklist + refresh rotativo + curto TTL
+  Paciente acessa rota de médico  CRÍTICO  RBAC em 100% dos endpoints + testes E2E
+  SQLite em produção              MÉDIO    Migrar e usar PostgreSQL antes do deploy
+  receitas.py quebrando na split  MÉDIO    Testar unitariamente antes de mover
+
+
+================================================================================
+  FIM DO MAPEAMENTO TRATHEA BACK-END v2.0
+  Próximos documentos a gerar:
+    → trathea_frontend_map.txt
+    → trathea_govbr_integration_spec.txt
+    → trathea_database_schema.txt
+================================================================================
