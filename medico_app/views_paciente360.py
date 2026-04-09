@@ -41,6 +41,20 @@ def _calcular_idade(data_nascimento):
         (hoje.month, hoje.day) < (data_nascimento.month, data_nascimento.day)
     )
 
+def _extrair_dados_paciente(paciente):
+    """Extrai informações resumidas do paciente para listagens protegidas."""
+    profile = getattr(paciente.user, 'profile', None)
+    cpf = profile.cpf if profile and profile.cpf else ""
+    cpf_mascarado = f"***.{cpf[3:6]}.***-**" if len(cpf) >= 6 else ""
+    foto_url = profile.foto.url if profile and profile.foto else None
+
+    return {
+        "nome": paciente.user.nome_completo,
+        "idade": _calcular_idade(paciente.data_nascimento),
+        "cpf": cpf_mascarado,
+        "foto_url": foto_url,
+    }
+
 
 @extend_schema(
     tags=["Consulta Médica"],
@@ -511,22 +525,12 @@ def atendimento_detalhes_view(request, atendimento_id):
         clinic_id_evento = evento.medico.clinica_principal_id if evento.medico else None
         if clinic_id_medico and clinic_id_evento and clinic_id_medico != clinic_id_evento:
             return api_error("Acesso negado: Evento pertence a outra clínica.", http_status=403)
-            
-        profile = getattr(evento.paciente.user, 'profile', None)
-        cpf = profile.cpf if profile and profile.cpf else ""
-        cpf_mascarado = f"***.{cpf[3:6]}.***-**" if len(cpf) >= 6 else ""
-        foto_url = profile.foto.url if profile and profile.foto else None
 
         return api_success(data={
             "id": evento.id,
             "tipo": "consulta",
             "status": evento.status,
-            "paciente": {
-                "nome": evento.paciente.user.nome_completo,
-                "idade": _calcular_idade(evento.paciente.data_nascimento),
-                "cpf": cpf_mascarado,
-                "foto_url": foto_url,
-            },
+            "paciente": _extrair_dados_paciente(evento.paciente),
             "detalhes": {
                 "data_inicio": evento.data_inicio.isoformat() if evento.data_inicio else None,
                 "queixa_principal": evento.queixa_principal,
@@ -555,22 +559,12 @@ def atendimento_detalhes_view(request, atendimento_id):
                 "posologia": item.posologia,
                 "via_administracao": item.via_administracao,
             })
-            
-        profile = getattr(evento.paciente.user, 'profile', None)
-        cpf = profile.cpf if profile and profile.cpf else ""
-        cpf_mascarado = f"***.{cpf[3:6]}.***-**" if len(cpf) >= 6 else ""
-        foto_url = profile.foto.url if profile and profile.foto else None
 
         return api_success(data={
             "id": evento.id,
             "tipo": "receita",
             "status": evento.status,
-            "paciente": {
-                "nome": evento.paciente.user.nome_completo,
-                "idade": _calcular_idade(evento.paciente.data_nascimento),
-                "cpf": cpf_mascarado,
-                "foto_url": foto_url,
-            },
+            "paciente": _extrair_dados_paciente(evento.paciente),
             "detalhes": {
                 "data_emissao": evento.data_emissao.isoformat() if getattr(evento, 'data_emissao', None) else None,
                 "assinada": getattr(evento, 'is_signed', False),
@@ -588,22 +582,12 @@ def atendimento_detalhes_view(request, atendimento_id):
         clinic_id_evento = evento.medico.clinica_principal_id if evento.medico else None
         if clinic_id_medico and clinic_id_evento and clinic_id_medico != clinic_id_evento:
             return api_error("Acesso negado: Evento pertence a outra clínica.", http_status=403)
-            
-        profile = getattr(evento.paciente.user, 'profile', None)
-        cpf = profile.cpf if profile and profile.cpf else ""
-        cpf_mascarado = f"***.{cpf[3:6]}.***-**" if len(cpf) >= 6 else ""
-        foto_url = profile.foto.url if profile and profile.foto else None
 
         return api_success(data={
             "id": evento.id,
             "tipo": "prontuario",
             "status": "registrado",
-            "paciente": {
-                "nome": evento.paciente.user.nome_completo,
-                "idade": _calcular_idade(evento.paciente.data_nascimento),
-                "cpf": cpf_mascarado,
-                "foto_url": foto_url,
-            },
+            "paciente": _extrair_dados_paciente(evento.paciente),
             "detalhes": {
                 "data": evento.data_consulta.isoformat() if evento.data_consulta else None,
                 "queixa_principal": evento.queixa_principal,
