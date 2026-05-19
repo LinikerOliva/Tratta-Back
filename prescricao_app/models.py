@@ -249,3 +249,44 @@ class TemplateReceita(models.Model):
 
     def __str__(self):
         return f"Template: {self.nome} ({self.tipo_receita})"
+
+
+class MedicamentoCheckin(models.Model):
+    """
+    Log de adesão ao tratamento — registra cada vez que o paciente
+    marca uma dose como tomada. Permite ao médico acompanhar
+    a aderência ao tratamento via dashboard.
+    """
+
+    item_receita = models.ForeignKey(
+        ItemReceita,
+        on_delete=models.CASCADE,
+        related_name="checkins",
+        verbose_name="Item da Receita",
+    )
+    paciente = models.ForeignKey(
+        "paciente_app.Paciente",
+        on_delete=models.CASCADE,
+        related_name="checkins_medicamento",
+        verbose_name="Paciente",
+    )
+    tomado_em = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Data/hora em que marcou como tomado",
+    )
+    dose_referencia = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Horário de referência da dose",
+        help_text="Horário planejado para a dose (calculado pela posologia).",
+    )
+    observacao = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        app_label = "prescricao_app"
+        verbose_name = "Check-in de Medicamento"
+        verbose_name_plural = "Check-ins de Medicamentos"
+        ordering = ["-tomado_em"]
+
+    def __str__(self):
+        return f"Check-in {self.item_receita.medicamento.nome} — {self.tomado_em:%d/%m %H:%M}"

@@ -3,7 +3,6 @@ medico_app/views_paciente360.py
 Dashboard 360° do Paciente — Visão completa para o médico.
 """
 import logging
-from datetime import date
 
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -33,27 +32,6 @@ def _resolve_medico(user):
     return None
 
 
-def _calcular_idade(data_nascimento):
-    if not data_nascimento:
-        return ""
-    hoje = date.today()
-    return hoje.year - data_nascimento.year - (
-        (hoje.month, hoje.day) < (data_nascimento.month, data_nascimento.day)
-    )
-
-def _extrair_dados_paciente(paciente):
-    """Extrai informações resumidas do paciente para listagens protegidas."""
-    profile = getattr(paciente.user, 'profile', None)
-    cpf = profile.cpf if profile and profile.cpf else ""
-    cpf_mascarado = f"***.{cpf[3:6]}.***-**" if len(cpf) >= 6 else ""
-    foto_url = profile.foto.url if profile and profile.foto else None
-
-    return {
-        "nome": paciente.user.nome_completo,
-        "idade": _calcular_idade(paciente.data_nascimento),
-        "cpf": cpf_mascarado,
-        "foto_url": foto_url,
-    }
 
 
 @extend_schema(
@@ -69,17 +47,14 @@ def _extrair_dados_paciente(paciente):
 def paciente_360_view(request, paciente_id):
     """Visão 360° do paciente para o médico."""
     try:
-        paciente = Paciente.objects.select_related("user").get(id=paciente_id)
+        paciente = Paciente.objects.select_related("user", "user__profile").get(id=paciente_id)
     except Paciente.DoesNotExist:
         return api_not_found("Paciente não encontrado.")
 
     # ── Dados do cabeçalho ───────────────────────────────────────────────
     cabecalho = {
-        "id": paciente.id,
-        "nome": paciente.user.nome_completo,
-        "idade": _calcular_idade(paciente.data_nascimento),
+        **paciente.get_summary(),
         "data_nascimento": paciente.data_nascimento.isoformat(),
-        "foto_url": paciente.user.foto.url if hasattr(paciente.user, 'foto') and paciente.user.foto else None,
         "email": paciente.user.email,
         "telefone": getattr(paciente.user, 'telefone', ''),
         "convenio": paciente.convenio_nome or "Particular",
@@ -275,6 +250,17 @@ def salvar_transcricao_view(request, consulta_id):
 @permission_classes([IsAuthenticated])
 def estruturar_transcricao_ia_view(request, consulta_id):
     """IA processa a transcrição e sugere campos clínicos."""
+    # ── Verificação de cota do plano ─────────────────────────────────
+    medico = _resolve_medico(request.user)
+    if medico:
+        assinatura = getattr(medico, "assinatura", None)
+        if assinatura and not assinatura.pode_transcrever():
+            return api_error(
+                "Você atingiu o limite de transcrições IA do seu plano. "
+                "Faça upgrade para continuar usando a IA.",
+                http_status=403,
+            )
+
     try:
         consulta = Consulta.objects.get(id=consulta_id)
     except Consulta.DoesNotExist:
@@ -318,6 +304,11 @@ def estruturar_transcricao_ia_view(request, consulta_id):
             "conduta": dados.get("condutaMedica", dados.get("conduta", "")),
             "medicamentos": medicamentos_formatados,
         }
+
+        # ── Consumir cota de transcrição após sucesso ────────────────
+        if medico and assinatura:
+            assinatura.consumir_transcricao()
+
     except Exception as e:
         logger.error(f"Erro ao estruturar transcrição com IA: {e}")
         # Fallback simples caso IA falhe
@@ -386,7 +377,15 @@ def finalizar_consulta_completa_view(request, consulta_id):
     prontuario_auth_url = None
     tipo_assinatura = request.data.get("tipo_assinatura")
 
-    # Gerar receita se houver medicamentos
+    # ── Verificação de cota de assinatura Gov.br ─────────────────────
+    assinatura_plano = getattr(medico, "assinatura", None)
+    if tipo_assinatura in ['govbr', 'senha'] and assinatura_plano:
+        if not assinatura_plano.pode_assinar_govbr():
+            return api_error(
+                "Você atingiu o limite de assinaturas digitais do seu plano. "
+                "Faça upgrade para continuar assinando documentos.",
+                http_status=403,
+            )
     receita_data = None
     medicamentos = request.data.get("medicamentos", [])
     if medicamentos:
@@ -454,6 +453,10 @@ def finalizar_consulta_completa_view(request, consulta_id):
                     # Atualiza status para assinado (ou similar se o seu Model prever outro campo)
                     receita_data["pki_auth_success"] = True
 
+                # ── Consumir cota de assinatura após sucesso ─────────────
+                if assinatura_plano:
+                    assinatura_plano.consumir_assinatura()
+
         except Exception as e:
             logger.error(f"Erro ao criar receita: {e}")
 
@@ -467,6 +470,10 @@ def finalizar_consulta_completa_view(request, consulta_id):
                 prontuario_auth_url = auth_url
             else:
                 receita_data = {"pki_auth_success": True}
+
+            # ── Consumir cota de assinatura ──────────────────────────
+            if assinatura_plano:
+                assinatura_plano.consumir_assinatura()
         except Exception as e:
             logger.error(f"Erro ao iniciar PKI/GovBR para o prontuario: {e}")
 
@@ -518,7 +525,7 @@ def atendimento_detalhes_view(request, atendimento_id):
     
     if tipo == "consulta":
         try:
-            evento = Consulta.objects.select_related("medico", "paciente__user").get(id=atendimento_id)
+            evento = Consulta.objects.select_related("medico", "paciente__user", "paciente__user__profile").get(id=atendimento_id)
         except Consulta.DoesNotExist:
             return api_not_found("Consulta não encontrada.")
             
@@ -530,7 +537,7 @@ def atendimento_detalhes_view(request, atendimento_id):
             "id": evento.id,
             "tipo": "consulta",
             "status": evento.status,
-            "paciente": _extrair_dados_paciente(evento.paciente),
+            "paciente": evento.paciente.get_summary(),
             "detalhes": {
                 "data_inicio": evento.data_inicio.isoformat() if evento.data_inicio else None,
                 "queixa_principal": evento.queixa_principal,
@@ -543,7 +550,7 @@ def atendimento_detalhes_view(request, atendimento_id):
     elif tipo == "receita":
         try:
             from prescricao_app.models import Receita
-            evento = Receita.objects.select_related("medico", "paciente__user").prefetch_related("itens__medicamento").get(id=atendimento_id)
+            evento = Receita.objects.select_related("medico", "paciente__user", "paciente__user__profile").prefetch_related("itens__medicamento").get(id=atendimento_id)
         except Receita.DoesNotExist:
             return api_not_found("Receita não encontrada.")
             
@@ -564,7 +571,7 @@ def atendimento_detalhes_view(request, atendimento_id):
             "id": evento.id,
             "tipo": "receita",
             "status": evento.status,
-            "paciente": _extrair_dados_paciente(evento.paciente),
+            "paciente": evento.paciente.get_summary(),
             "detalhes": {
                 "data_emissao": evento.data_emissao.isoformat() if getattr(evento, 'data_emissao', None) else None,
                 "assinada": getattr(evento, 'is_signed', False),
@@ -575,7 +582,7 @@ def atendimento_detalhes_view(request, atendimento_id):
         
     elif tipo == "prontuario":
         try:
-            evento = Prontuario.objects.select_related("medico", "paciente__user").get(id=atendimento_id)
+            evento = Prontuario.objects.select_related("medico", "paciente__user", "paciente__user__profile").get(id=atendimento_id)
         except Prontuario.DoesNotExist:
             return api_not_found("Prontuário não encontrado.")
             
@@ -587,7 +594,7 @@ def atendimento_detalhes_view(request, atendimento_id):
             "id": evento.id,
             "tipo": "prontuario",
             "status": "registrado",
-            "paciente": _extrair_dados_paciente(evento.paciente),
+            "paciente": evento.paciente.get_summary(),
             "detalhes": {
                 "data": evento.data_consulta.isoformat() if evento.data_consulta else None,
                 "queixa_principal": evento.queixa_principal,

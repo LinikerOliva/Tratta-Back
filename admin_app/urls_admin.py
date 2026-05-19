@@ -3,6 +3,7 @@ from django.urls import path
 from .views import AdminDashboardView, AvaliarSolicitacaoView
 from .views_usuarios import AdminUsuariosListView, AdminUsuarioDetailView
 from .views_clinicas import AdminClinicasListView, AdminClinicaDetailView
+from .views_planos import AdminPlanosListView, AdminPlanosDetailView
 
 urlpatterns = [
     path("", AdminDashboardView.as_view(), name="admin-dashboard"),
@@ -15,4 +16,8 @@ urlpatterns = [
     # ── Clínicas
     path("clinicas/", AdminClinicasListView.as_view(), name="admin-clinicas"),
     path("clinicas/<int:pk>/", AdminClinicaDetailView.as_view(), name="admin-clinica-detail"),
+    
+    # ── Planos
+    path("planos/", AdminPlanosListView.as_view(), name="admin-planos"),
+    path("planos/<int:pk>/", AdminPlanosDetailView.as_view(), name="admin-plano-detail"),
 ]

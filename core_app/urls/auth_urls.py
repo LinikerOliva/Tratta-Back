@@ -16,6 +16,10 @@ from core_app.views.auth import (
     govbr_authorize_view,
     govbr_callback_view,
 )
+from core_app.views.password_reset import (
+    reset_password_request_view,
+    reset_password_confirm_view,
+)
 
 urlpatterns = [
     # JWT
@@ -28,6 +32,9 @@ urlpatterns = [
     path("register/medico/", register_medico_view, name="auth-register-medico"),
     path("register/clinica/", register_clinica_view, name="auth-register-clinica"),
     path("change-password/", change_password_view, name="auth-change-password"),
+    # Reset de Senha
+    path("reset-password/", reset_password_request_view, name="auth-reset-password"),
+    path("reset-password/confirm/", reset_password_confirm_view, name="auth-reset-password-confirm"),
     # Gov.br OAuth2
     path("govbr/authorize/", govbr_authorize_view, name="govbr-authorize"),
     path("govbr/callback/", govbr_callback_view, name="govbr-callback"),

@@ -71,6 +71,27 @@ class Paciente(models.Model):
             (hoje.month, hoje.day) < (self.data_nascimento.month, self.data_nascimento.day)
         )
 
+    @property
+    def cpf_mascarado(self) -> str:
+        """Retorna o CPF do perfil do usuário no formato ***.456.***-**."""
+        profile = getattr(self.user, "profile", None)
+        cpf = profile.cpf if profile and profile.cpf else ""
+        if len(cpf) >= 11:
+            return f"***.{cpf[3:6]}.***-**"
+        return "***.***.***-**"
+
+    def get_summary(self) -> dict:
+        """Retorna dicionário resumido do paciente para listagens e dashboards."""
+        profile = getattr(self.user, "profile", None)
+        foto_url = profile.foto.url if profile and profile.foto else None
+        return {
+            "id": self.id,
+            "nome": self.user.nome_completo,
+            "idade": self.idade,
+            "cpf": self.cpf_mascarado,
+            "foto_url": foto_url,
+        }
+
 
 class Prontuario(models.Model):
     """Registro de prontuário médico."""
@@ -104,3 +125,55 @@ class Prontuario(models.Model):
 
     def __str__(self):
         return f"Prontuário {self.paciente} — {self.data_consulta:%d/%m/%Y}"
+
+class SolicitacaoConsulta(models.Model):
+    """Solicitação de agendamento feita pelo paciente via app."""
+    class Status(models.TextChoices):
+        PENDENTE = "pendente", "Pendente"
+        ACEITA = "aceita", "Aceita (Agendada)"
+        RECUSADA = "recusada", "Recusada"
+        NOVO_HORARIO = "novo_horario", "Novo Horário Sugerido"
+
+    class PeriodoPref(models.TextChoices):
+        MANHA = "manha", "Manhã"
+        TARDE = "tarde", "Tarde"
+        NOITE = "noite", "Noite"
+
+    paciente = models.ForeignKey(
+        Paciente,
+        on_delete=models.CASCADE,
+        related_name="solicitacoes_consulta"
+    )
+    medico = models.ForeignKey(
+        "medico_app.Medico",
+        on_delete=models.CASCADE,
+        related_name="solicitacoes_recebidas"
+    )
+    data_preferencia = models.DateField(verbose_name="Data preferida")
+    periodo_preferencia = models.CharField(
+        max_length=20, 
+        choices=PeriodoPref.choices, 
+        verbose_name="Período"
+    )
+    motivo = models.CharField(max_length=255, verbose_name="Motivo resumido")
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDENTE,
+        verbose_name="Status da solicitação"
+    )
+    resposta_clinica = models.TextField(
+        blank=True,
+        verbose_name="Resposta/Justificativa da Clínica"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "paciente_app"
+        verbose_name = "Solicitação de Consulta"
+        verbose_name_plural = "Solicitações de Consulta"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.paciente} -> {self.medico} ({self.get_status_display()})"

@@ -11,6 +11,11 @@ from .views_paciente360 import (
     finalizar_consulta_completa_view,
     atendimento_detalhes_view
 )
+from .views_solicitacoes import (
+    medico_solicitacoes_list_view,
+    responder_solicitacao_view
+)
+from .views_plano import meu_plano_view, catalogo_planos_view
 
 urlpatterns = [
     path("", MedicoListView.as_view(), name="medico-list"),
@@ -22,6 +27,9 @@ urlpatterns = [
     path("me/settings/",    medico_settings_view,    name="medico-settings"),
     path("me/receituario/", medico_receituario_view, name="medico-receituario"),
     path("me/agenda/",      medico_agenda_view,      name="medico-agenda-config"),
+    path("me/plano/",       meu_plano_view,          name="medico-meu-plano"),
+    # ── Catálogo de Planos ─────────────────────────────────────────────────────
+    path("planos/",         catalogo_planos_view,    name="catalogo-planos"),
     
     # ── Iniciar Consulta / Receita Inteligente ─────────────────────────────────
     path("consulta/contexto/<int:paciente_id>/", carregar_contexto_paciente_view, name="consulta-contexto"),
@@ -35,4 +43,8 @@ urlpatterns = [
     path("consulta-inteligente/<int:consulta_id>/estruturar-ia/", estruturar_transcricao_ia_view, name="consulta-estruturar-ia"),
     path("consulta-inteligente/<int:consulta_id>/finalizar/", finalizar_consulta_completa_view, name="consulta-finalizar-completa"),
     path("atendimento/<int:atendimento_id>/detalhes/", atendimento_detalhes_view, name="atendimento-detalhes"),
+    
+    # ── Solicitações de Consultas dos Pacientes ────────────────────────────────
+    path("me/solicitacoes/", medico_solicitacoes_list_view, name="medico-solicitacoes-list"),
+    path("me/solicitacoes/<int:solicitacao_id>/responder/", responder_solicitacao_view, name="medico-solicitacoes-responder"),
 ]

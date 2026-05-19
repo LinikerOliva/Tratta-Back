@@ -21,6 +21,8 @@ class Clinica(models.Model):
     telefone = models.CharField(max_length=20, blank=True)
     email_contato = models.EmailField(blank=True)
     endereco = models.TextField(blank=True)
+    latitude = models.FloatField(null=True, blank=True, help_text="Latitude para geolocalização")
+    longitude = models.FloatField(null=True, blank=True, help_text="Longitude para geolocalização")
     logo = models.ImageField(upload_to="clinicas/logos/", null=True, blank=True)
     horario_funcionamento = models.CharField(max_length=200, blank=True)
     medicos = models.ManyToManyField(
